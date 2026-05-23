@@ -60,40 +60,51 @@ if st.button("集計を実行"):
                 try:
                     result = run_cashflow_process(base_dir)
 
-                    st.success("処理が完了しました。")
+                    # 一時フォルダが消えてもダウンロードできるように、
+                    # ファイル本体をセッションに保存する
+                    st.session_state["summary"] = result
+                    st.session_state["output_file"] = result["output_path"].read_bytes()
+                    st.session_state["unmatched_file"] = result["unmatched_path"].read_bytes()
+                    st.session_state["manual_log_file"] = result["manual_log_path"].read_bytes()
 
-                    st.write("### 処理結果")
-                    st.write(f"伝票検索ファイル数：{result['voucher_file_count']:,}")
-                    st.write(f"伝票検索取込件数：{result['voucher_row_count']:,}")
-                    st.write(f"CF対象件数：{result['cf_row_count']:,}")
-                    st.write(f"CF反映済件数：{result['matched_count']:,}")
-                    st.write(f"未反映件数：{result['unmatched_count']:,}")
-                    st.write(f"手入力反映件数：{result['manual_reflect_count']:,}")
-
-                    with open(result["output_path"], "rb") as f:
-                        st.download_button(
-                            "cashflow_output.xlsx をダウンロード",
-                            data=f,
-                            file_name="cashflow_output.xlsx",
-                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                        )
-
-                    with open(result["unmatched_path"], "rb") as f:
-                        st.download_button(
-                            "未反映仕訳一覧.xlsx をダウンロード",
-                            data=f,
-                            file_name="未反映仕訳一覧.xlsx",
-                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                        )
-
-                    with open(result["manual_log_path"], "rb") as f:
-                        st.download_button(
-                            "手入力反映ログ.xlsx をダウンロード",
-                            data=f,
-                            file_name="手入力反映ログ.xlsx",
-                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                        )
+                    st.success("処理が完了しました。下のボタンからダウンロードしてください。")
 
                 except Exception as e:
                     st.error("処理中にエラーが発生しました。")
                     st.exception(e)
+
+
+# ダウンロードボタンは、集計実行ボタンの外に置く
+# これにより、1つダウンロードしても残りのボタンが消えない
+if "summary" in st.session_state:
+
+    result = st.session_state["summary"]
+
+    st.write("### 処理結果")
+    st.write(f"伝票検索ファイル数：{result['voucher_file_count']:,}")
+    st.write(f"伝票検索取込件数：{result['voucher_row_count']:,}")
+    st.write(f"CF対象件数：{result['cf_row_count']:,}")
+    st.write(f"CF反映済件数：{result['matched_count']:,}")
+    st.write(f"未反映件数：{result['unmatched_count']:,}")
+    st.write(f"手入力反映件数：{result['manual_reflect_count']:,}")
+
+    st.download_button(
+        "cashflow_output.xlsx をダウンロード",
+        data=st.session_state["output_file"],
+        file_name="cashflow_output.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+
+    st.download_button(
+        "未反映仕訳一覧.xlsx をダウンロード",
+        data=st.session_state["unmatched_file"],
+        file_name="未反映仕訳一覧.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+
+    st.download_button(
+        "手入力反映ログ.xlsx をダウンロード",
+        data=st.session_state["manual_log_file"],
+        file_name="手入力反映ログ.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
