@@ -1,8 +1,9 @@
 import streamlit as st
 from pathlib import Path
 import tempfile
-
-from cashflow_logic import run_cashflow_process
+import subprocess
+import sys
+import shutil
 
 st.title("キャッシュフロー集計ツール")
 
@@ -24,6 +25,17 @@ manual_file = st.file_uploader(
     type=["xlsx"]
 )
 
+correction_file = st.file_uploader(
+    "CF反映済_修正用.xlsx（任意）",
+    type=["xlsx"]
+)
+
+def save_uploaded_file(uploaded_file, folder: Path):
+    path = folder / uploaded_file.name
+    with open(path, "wb") as f:
+        f.write(uploaded_file.getbuffer())
+    return path
+
 if st.button("集計を実行"):
 
     if (
@@ -37,56 +49,63 @@ if st.button("集計を実行"):
     else:
         with st.spinner("処理中です..."):
 
-            with tempfile.TemporaryDirectory() as tmpdir:
-                base_dir = Path(tmpdir)
+            try:
+                with tempfile.TemporaryDirectory() as tmpdir:
+                    base_dir = Path(tmpdir)
 
-                def save_uploaded_file(uploaded_file):
-                    path = base_dir / uploaded_file.name
-                    with open(path, "wb") as f:
-                        f.write(uploaded_file.getbuffer())
-                    return path
+                    for file in voucher_files:
+                        save_uploaded_file(file, base_dir)
 
-                for file in voucher_files:
-                    save_uploaded_file(file)
+                    save_uploaded_file(detail_master, base_dir)
+                    save_uploaded_file(shozoku_master, base_dir)
+                    save_uploaded_file(interface_master, base_dir)
+                    save_uploaded_file(cashflow_items, base_dir)
 
-                save_uploaded_file(detail_master)
-                save_uploaded_file(shozoku_master)
-                save_uploaded_file(interface_master)
-                save_uploaded_file(cashflow_items)
+                    if manual_file is not None:
+                        save_uploaded_file(manual_file, base_dir)
 
-                if manual_file is not None:
-                    save_uploaded_file(manual_file)
+                    if correction_file is not None:
+                        save_uploaded_file(correction_file, base_dir)
 
-                try:
-                    result = run_cashflow_process(base_dir)
+                    script_source = Path(__file__).resolve().parent / "cashflow_script.py"
+                    script_target = base_dir / "cashflow_script.py"
+                    shutil.copy(script_source, script_target)
 
-                    # 一時フォルダが消えてもダウンロードできるように、
-                    # ファイル本体をセッションに保存する
-                    st.session_state["summary"] = result
-                    st.session_state["output_file"] = result["output_path"].read_bytes()
-                    st.session_state["unmatched_file"] = result["unmatched_path"].read_bytes()
-                    st.session_state["manual_log_file"] = result["manual_log_path"].read_bytes()
+                    completed = subprocess.run(
+                        [sys.executable, str(script_target)],
+                        cwd=base_dir,
+                        capture_output=True,
+                        text=True,
+                        check=False
+                    )
 
-                    st.success("処理が完了しました。下のボタンからダウンロードしてください。")
+                    if completed.returncode != 0:
+                        st.error("処理中にエラーが発生しました。")
+                        st.code(completed.stderr)
+                    else:
+                        output_path = base_dir / "cashflow_output.xlsx"
+                        unmatched_path = base_dir / "未反映仕訳一覧.xlsx"
+                        manual_log_path = base_dir / "手入力反映ログ.xlsx"
+                        correction_log_path = base_dir / "CF反映修正ログ.xlsx"
 
-                except Exception as e:
-                    st.error("処理中にエラーが発生しました。")
-                    st.exception(e)
+                        st.session_state["stdout"] = completed.stdout
+                        st.session_state["output_file"] = output_path.read_bytes()
+                        st.session_state["unmatched_file"] = unmatched_path.read_bytes()
+                        st.session_state["manual_log_file"] = manual_log_path.read_bytes()
+                        st.session_state["correction_log_file"] = correction_log_path.read_bytes()
 
+                        st.success("処理が完了しました。下のボタンからダウンロードしてください。")
 
-# ダウンロードボタンは、集計実行ボタンの外に置く
-# これにより、1つダウンロードしても残りのボタンが消えない
-if "summary" in st.session_state:
+            except Exception as e:
+                st.error("処理中にエラーが発生しました。")
+                st.exception(e)
 
-    result = st.session_state["summary"]
+if "output_file" in st.session_state:
 
-    st.write("### 処理結果")
-    st.write(f"伝票検索ファイル数：{result['voucher_file_count']:,}")
-    st.write(f"伝票検索取込件数：{result['voucher_row_count']:,}")
-    st.write(f"CF対象件数：{result['cf_row_count']:,}")
-    st.write(f"CF反映済件数：{result['matched_count']:,}")
-    st.write(f"未反映件数：{result['unmatched_count']:,}")
-    st.write(f"手入力反映件数：{result['manual_reflect_count']:,}")
+    st.write("### 実行結果")
+
+    if "stdout" in st.session_state:
+        st.code(st.session_state["stdout"])
 
     st.download_button(
         "cashflow_output.xlsx をダウンロード",
@@ -106,5 +125,12 @@ if "summary" in st.session_state:
         "手入力反映ログ.xlsx をダウンロード",
         data=st.session_state["manual_log_file"],
         file_name="手入力反映ログ.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+
+    st.download_button(
+        "CF反映修正ログ.xlsx をダウンロード",
+        data=st.session_state["correction_log_file"],
+        file_name="CF反映修正ログ.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
